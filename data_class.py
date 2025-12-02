@@ -25,7 +25,7 @@ class StockData:
         dt = df['date'].tail(1)
         return dt[0]
 
-    def get(self, symbol, hours_back=8):
+    def get(self, symbol, hours_back=24):
         historical = pl.read_ipc(f'data/{symbol}.feather', memory_map=False).select(['date', 'open', 'close'])
         historical = historical.with_columns(pl.col("date").cast(pl.Int64))
 

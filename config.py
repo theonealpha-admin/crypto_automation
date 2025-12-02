@@ -8,10 +8,12 @@ class Config:
         self.interval = "1m"
         self.api_key = 'jrXkGM33TgGgeTuCP8a8Zwfo4YuItLYlIJ5z7IILdAM5lUNHGxyxuOv06c02wNqA'
         self.api_secret = '08bAflWviEUI0mxqTeDPWfiK0J3YzNtbB2vZMi6luFANnq18br945PA9SxFWZy6E'
+        # self.api_key = 'o38amEHjMlQmelKOTSBdh7u1q4YxROtTlpdeNa16eeWHDCPg7ETWuQ9q5y6IEJlx'
+        # self.api_secret = 'InOIa6gGJVjQVIbvNfnxv0uJp34V6kkpo1TGVbX8BjTigoYOTGZOMIPrlLUfTDiI'
 
     def binance_client(self):
-        client = Client(self.api_key, self.api_secret)
-        bm = ThreadedWebsocketManager(api_key=self.api_key, api_secret=self.api_secret)
+        client = Client(self.api_key, self.api_secret, testnet=True)
+        bm = ThreadedWebsocketManager(api_key=self.api_key, api_secret=self.api_secret, testnet=True)
         return client, bm
 
 

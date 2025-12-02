@@ -26,10 +26,8 @@ class historical_data(Config, DB):
             
             rows = [(symbol['symbol'], int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])) 
                     for c in candles if c]
-            
             if rows:
                 self.db.save_data(rows, symbol['symbol'])
-            
             start = chunk_end + 60000
             time.sleep(0.3)
 
@@ -52,9 +50,11 @@ class webs(Config, DB):
         data = msg.get('data', msg)
         if 'c' not in data:
             return
-            
         ts_key = f"stock:ticks:{data['s']}"
         self.rconn.ts().add(ts_key, '*', float(data['c']))
+
+        channel = f"stock:price:{data['s']}"
+        self.rconn.publish(channel, float(data['c']))
         print(f"🔥 {data['s']}: {data['c']}")
          
     def auto_close(self):

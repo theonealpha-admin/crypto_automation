@@ -27,13 +27,13 @@ if __name__ == '__main__':
     p1 = mp.Process(target=ws_process)
     p1.start()
 
-    # historical_data = historical_data()
-    # ohlcv = historical_data.ohlcv()
-    # print("🏆 Completed OHLCV Downloader")
+    historical_data = historical_data()
+    ohlcv = historical_data.ohlcv()
+    print("🏆 Completed OHLCV Downloader")
 
-    # # sql to feather
-    # write_file()
-    # print("🏆 Completed writing feather files")
+    # sql to feather
+    write_file()
+    print("🏆 Completed writing feather files")
 
 
 #data class
