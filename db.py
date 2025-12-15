@@ -3,7 +3,8 @@ import sqlite3
 import pandas as pd
 from pytz import utc
 import os
-import polars as pl
+import json
+import numpy as np
 from config import RedisConnection
 
 class DB():
@@ -12,7 +13,7 @@ class DB():
         self.cursor = self.conn.cursor()
         self.rconn = RedisConnection.get_instance()
     
-    def save_data(self, chunk_data, symbol): #saving data to sqlite
+    def save_data(self, chunk_data, symbol):
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS ohlc (symbol TEXT,date TEXT,open REAL,high REAL,low REAL,close REAL,volume INTEGER,PRIMARY KEY (symbol, date))
             ''')
@@ -23,40 +24,55 @@ class DB():
         self.conn.commit()
         print(f"✅ Saved Api Data In db: {symbol}")
 
-    def last_row(self, symbol): #getting last row from sqlite
+    def last_row(self, symbol): 
+        query = "SELECT date FROM ohlc WHERE symbol=? ORDER BY date DESC LIMIT 1"
+        self.cursor.execute(query, (symbol,))
+        row = self.cursor.fetchone()
+        if row:
+            return row
+
+    @staticmethod
+    def all_data(symbol):
+        conn = sqlite3.connect('crypto.db')
+        cursor = conn.cursor()
+        query = "SELECT symbol, date, open, close FROM ohlc WHERE symbol=? ORDER BY date"
+        cursor.execute(query, (symbol,))
+        rows = cursor.fetchall()
+        return rows if rows else []
+
+    def save_spreads(self, spreads, pair, live=False):
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS spreads (symbol TEXT, date INTEGER, open REAL, close REAL,hedge_ratio REAL,PRIMARY KEY (symbol, date))
+        ''')
+        data = list(zip([pair] * len(spreads),spreads['date'].astype(int).tolist(),spreads['open'].astype(float).tolist(),spreads['close'].astype(float).tolist(),spreads['hedge_ratio'].astype(float).tolist()
+        ))
+
+        if live:
+            key = f"spreads:{pair}"
+            records = [json.dumps({ "date": int(r[0]),"open": float(r[1]),"close": float(r[2]),"hedge_ratio": float(r[3])}) for r in spreads]
+            self.rconn.rpush(key, *records)
+            
+        # print("data", data[-5:])
+        self.cursor.executemany('INSERT OR IGNORE INTO spreads VALUES (?, ?, ?, ?, ?)', data)
+        self.conn.commit()
+        # print(f"✅ Saved {len(data)} rows: {pair}")
+
+    def spreads_last_row(self, symbol): 
         try:
-            query = "SELECT date FROM ohlc WHERE symbol=? ORDER BY date DESC LIMIT 1"
+            query = "SELECT date FROM spreads WHERE symbol=? ORDER BY date DESC LIMIT 1"
             self.cursor.execute(query, (symbol,))
             row = self.cursor.fetchone()
             if row:
-                return row
-        except Exception as e:
-            print(f"X Db Not Found")
+                return int(row[0])
             return None
-        return None
-
-    def all_data(self, symbol): #getting all data from sqlite
-        try:
-            query = "SELECT * FROM ohlc WHERE symbol=? ORDER BY date"
+        except:
+            return None
+    
+    def spreads_all_data(self, symbol, limit=None):
+        if limit:
+            query = "SELECT * FROM spreads WHERE symbol=? ORDER BY date DESC LIMIT ?"
+            self.cursor.execute(query, (symbol, limit))
+        else:
+            query = "SELECT * FROM spreads WHERE symbol=? ORDER BY date"
             self.cursor.execute(query, (symbol,))
-            row = self.cursor.fetchall()
-            if row:
-                return row
-        except Exception as e:
-            print(f"X Db Not Found")
-            return None
-        return None
-        
-    def sql_to_feather(self, symbol): #using this sql to feather
-        df = self.all_data(symbol)
-        columns = ['symbol', 'date', 'open', 'high', 'low', 'close', 'volume']
-        dd = pl.DataFrame(df, schema=columns, orient='row')
-        # print("dd", dd)
-        os.makedirs('data', exist_ok=True)
-        dd.write_ipc(f'data/{symbol}.feather', compression='lz4')
-        print(f"✅ Saved: data/{symbol}.feather ({len(dd)} rows)")
-        return dd
-
-def process_symbol(symbol):
-    db = DB()
-    db.sql_to_feather(symbol)
+        return self.cursor.fetchall()

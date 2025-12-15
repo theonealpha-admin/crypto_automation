@@ -1,6 +1,7 @@
 from binance.client import Client
 from config import Config, RedisConnection
 from db import DB
+import redis.exceptions
 from datetime import datetime, timedelta
 import pandas as pd
 import polars as pl
@@ -21,14 +22,14 @@ class historical_data(Config, DB):
         start = self.db.last_row(symbol['symbol'])
         start = self.base_start if start is None else int(start[0])
         while start < self.end_date:
-            chunk_end = min(start + 28800000, self.end_date)
+            chunk_end = min(start + 28800000, self.end_date) #chunks of 8 hours (28800000 ms for 8hrs)
             candles = client.get_historical_klines(symbol['symbol'], Client.KLINE_INTERVAL_1MINUTE, start, chunk_end)
             
             rows = [(symbol['symbol'], int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])) 
                     for c in candles if c]
             if rows:
                 self.db.save_data(rows, symbol['symbol'])
-            start = chunk_end + 60000
+            start = chunk_end + 60000 #(increment by 1 minute)
             time.sleep(0.3)
 
     def ohlcv(self):
@@ -51,18 +52,29 @@ class webs(Config, DB):
         if 'c' not in data:
             return
         ts_key = f"stock:ticks:{data['s']}"
-        self.rconn.ts().add(ts_key, '*', float(data['c']))
-
+        
+        try:
+            self.rconn.ts().add(ts_key, '*', float(data['c']))
+        except redis.exceptions.ResponseError:
+            pass
+        
         channel = f"stock:price:{data['s']}"
         self.rconn.publish(channel, float(data['c']))
-        print(f"🔥 {data['s']}: {data['c']}")
+        # print(f"🔥 {data['s']}: {data['c']}")
          
     def auto_close(self):
-        self.bm.start()
-        streams = [f"{symbol.lower()}@ticker" for symbol in self.symbols]
-        self.bm.start_multiplex_socket(callback=self.on_message, streams=streams)
-        print("🚀 Binance WebSocket connected!")
-        
-        import time
         while True:
-            time.sleep(30)
+            try:
+                self.bm.start()
+                streams = [f"{symbol.lower()}@ticker" for symbol in self.symbols]
+                self.bm.start_multiplex_socket(callback=self.on_message, streams=streams)
+                print("🚀 Binance WebSocket connected!")
+                
+                while True:
+                    time.sleep(30)
+                    
+            except Exception as e:
+                print(f"⚠️ WebSocket error: {e}")
+                print("🔄 Reconnecting in 5 seconds...")
+                time.sleep(5)
+                self.bm = self.Cnfg.binance_client()[1]  # ✅ Fresh instance

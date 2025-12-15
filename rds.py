@@ -19,9 +19,7 @@ class RedisData(Config):
                 source_key = f"stock:ticks:{symbol['symbol']}"
                 self.rconn.ts().create(source_key)
                 for field, agg_type in ohlc_fields.items():
-                    # dest_key = f"stock:1m:{field}:{symbol['symbol']}"
                     dest_key = f"stock:{symbol['symbol']}:{field}"
-                    # self.rconn.ts().create(dest_key)
                     self.rconn.ts().create(dest_key, labels={"symbol": symbol['symbol'], "field": field})
                     self.rconn.ts().createrule(
                         source_key,
