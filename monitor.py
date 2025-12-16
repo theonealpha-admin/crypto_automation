@@ -159,6 +159,5 @@ class spd_ws(StockData, Positions):
                     # print(f"{pair} | Spread: {spd_close:.5f} | mean_price: {mean_price} | Action: {action}")  
                     # print(f"trade {self.trades}")
 
-
 # asyncio.run(spd_ws().on_message())
 

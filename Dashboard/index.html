@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Spread Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
+            color: #fff;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+        }
+        
+        h1 { font-size: 24px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+        
+        .controls { display: flex; gap: 15px; align-items: center; }
+        
+        select {
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            cursor: pointer;
+            outline: none;
+        }
+        
+        select option { background: #1e1e2e; color: white; }
+        
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+        }
+        
+        .status.live { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
+        .status.connecting { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
+        .status.error { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        .status.live .status-dot { background: #22c55e; }
+        .status.connecting .status-dot { background: #fbbf24; }
+        .status.error .status-dot { background: #ef4444; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.6);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            letter-spacing: 0.5px;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: 600;
+            /* Font variant for numeric alignment is important when decimals change */
+            font-variant-numeric: tabular-nums; 
+        }
+        
+        .stat-value.purple { color: #8b5cf6; }
+        .stat-value.yellow { color: #fbbf24; }
+        .stat-value.red { color: #ef4444; }
+        .stat-value.green { color: #22c55e; }
+        
+        .chart-container {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            position: relative;
+            height: 600px;
+        }
+        
+        .legend {
+            display: flex;
+            gap: 20px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: rgba(255,255,255,0.7);
+        }
+        
+        .legend-color { width: 12px; height: 12px; border-radius: 2px; }
+        .legend-color.spread { background: #3b82f6; height: 3px; }
+        .legend-color.mean { background: #fbbf24; border: 1px dashed #fbbf24; height: 0; border-bottom-width: 2px; }
+        .legend-color.upper { background: #ef4444; border: 1px dashed #ef4444; height: 0; border-bottom-width: 2px; }
+        .legend-color.lower { background: #22c55e; border: 1px dashed #22c55e; height: 0; border-bottom-width: 2px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Live Spread Monitor</h1>
+            <div class="controls">
+                <select id="pairSelect">
+                    <option value="">Loading pairs...</option>
+                </select>
+                <div class="status connecting" id="status">
+                    <span class="status-dot"></span>
+                    <span id="statusText">Connecting...</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Live Spread</div>
+                <div class="stat-value purple" id="liveSpread" data-prev="0">--</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Mean</div>
+                <div class="stat-value yellow" id="mean">--</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Upper Band (+2σ)</div>
+                <div class="stat-value red" id="upper">--</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Lower Band (-2σ)</div>
+                <div class="stat-value green" id="lower">--</div>
+            </div>
+        </div>
+        
+        <div class="chart-container">
+            <canvas id="chart"></canvas>
+            <div class="legend">
+                <div class="legend-item"><div class="legend-color spread"></div><span>Spread</span></div>
+                <div class="legend-item"><div class="legend-color mean"></div><span>Mean</span></div>
+                <div class="legend-item"><div class="legend-color upper"></div><span>Upper</span></div>
+                <div class="legend-item"><div class="legend-color lower"></div><span>Lower</span></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let chart = null;
+        let currentPair = '';
+        
+        // --- CONSTANTS ---
+        const DECIMAL_PLACES = 8;
+        
+        // Chart Initialization
+        function initChart() {
+            const ctx = document.getElementById('chart').getContext('2d');
+            
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { // Index 0: Spread (Blue Line)
+                            label: 'Spread', 
+                            data: [], 
+                            borderColor: '#3b82f6', 
+                            borderWidth: 2, 
+                            pointRadius: 0,
+                            tension: 0.1,
+                            order: 2
+                        },
+                        { // Index 1: Mean (Yellow Line)
+                            label: 'Mean', 
+                            data: [], 
+                            borderColor: '#fbbf24', 
+                            borderWidth: 1.5, 
+                            borderDash: [5, 5], 
+                            pointRadius: 0, 
+                            fill: false,
+                            order: 3
+                        },
+                        { // Index 2: Upper (Red Line)
+                            label: 'Upper', 
+                            data: [], 
+                            borderColor: '#ef4444', 
+                            borderWidth: 1.5, 
+                            borderDash: [5, 5], 
+                            pointRadius: 0, 
+                            fill: false,
+                            order: 3
+                        },
+                        { // Index 3: Lower (Green Line)
+                            label: 'Lower', 
+                            data: [], 
+                            borderColor: '#22c55e', 
+                            borderWidth: 1.5, 
+                            borderDash: [5, 5], 
+                            pointRadius: 0, 
+                            fill: false,
+                            order: 3
+                        },
+                        { // Index 4: Trades (Scatter)
+                            label: 'Trades', 
+                            data: [], 
+                            type: 'scatter', 
+                            pointBackgroundColor: (ctx) => {
+                                return ctx.raw?.action === 'BUY' ? '#22c55e' : '#ef4444';
+                            }, 
+                            pointBorderColor: '#fff', 
+                            pointBorderWidth: 2, 
+                            pointRadius: 6, 
+                            showLine: false,
+                            order: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: { 
+                        legend: { display: false },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            backgroundColor: 'rgba(30, 30, 46, 0.9)',
+                            titleColor: '#fff',
+                            bodyColor: '#ccc',
+                            borderColor: 'rgba(255,255,255,0.1)',
+                            borderWidth: 1,
+                            // Tooltip Formatting to 8 decimal places
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    if (context.parsed.y !== null) {
+                                        label += context.parsed.y.toFixed(DECIMAL_PLACES);
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { 
+                            grid: { color: 'rgba(255,255,255,0.05)' }, 
+                            ticks: { 
+                                color: 'rgba(255,255,255,0.5)', 
+                                maxTicksLimit: 8,
+                                maxRotation: 0
+                            } 
+                        },
+                        y: { 
+                            position: 'right',
+                            grid: { color: 'rgba(255,255,255,0.05)' }, 
+                            ticks: { 
+                                color: 'rgba(255,255,255,0.6)',
+                                // Y-Axis Ticks Formatting to 8 decimal places
+                                callback: function(value, index, ticks) {
+                                    return value.toFixed(DECIMAL_PLACES);
+                                }
+                            } 
+                        }
+                    }
+                }
+            });
+        }
+
+        // Handle Historical / New Candle Data
+        function updateChartFull(data) {
+            const timeLabels = data.dates.map(d => {
+                const date = new Date(d);
+                return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+            });
+            
+            let currentCloses = [...data.closes];
+            let currentMean = [...data.mean];
+            let currentUpper = [...data.upper];
+            let currentLower = [...data.lower];
+            let currentLabels = [...timeLabels];
+
+            if (currentCloses.length > 0) {
+                // Preserve the last candle and create a new slot for the live tick
+                // Extend the data arrays with 'null' for the live tick slot
+                currentCloses.push(null); 
+                currentMean.push(null);
+                currentUpper.push(null);
+                currentLower.push(null);
+                
+                // Extend the labels with an empty string for the live tick slot
+                currentLabels.push(''); 
+            }
+
+            chart.data.labels = currentLabels;
+            chart.data.datasets[0].data = currentCloses; // Spread
+            chart.data.datasets[1].data = currentMean; // Mean
+            chart.data.datasets[2].data = currentUpper; // Upper
+            chart.data.datasets[3].data = currentLower; // Lower
+            
+            // Map Trades (Index 4)
+            chart.data.datasets[4].data = data.trades.map(t => {
+                const idx = data.dates.indexOf(t.date);
+                return idx !== -1 ? { x: idx, y: t.spread, action: t.action } : null;
+            }).filter(Boolean);
+
+            if (data.closes.length > 0) {
+                const lastVal = data.closes[data.closes.length - 1]; 
+                updateStats(data);
+                updateLiveText(lastVal);
+            } else {
+                 document.getElementById('mean').textContent = '--';
+                 document.getElementById('upper').textContent = '--';
+                 document.getElementById('lower').textContent = '--';
+                 document.getElementById('liveSpread').textContent = '--';
+            }
+
+            chart.update();
+        }
+
+        // Handle High-Frequency Live Updates
+        function updateLiveSpread(spread) {
+            if (!chart || chart.data.datasets[0].data.length < 1) return;
+
+            const liveIndex = chart.data.datasets[0].data.length - 1; 
+            
+            // 1. Update the live slot in the main Spread Line (Index 0)
+            chart.data.datasets[0].data[liveIndex] = spread;
+            
+            // 2. Update Text UI
+            updateLiveText(spread);
+
+            // 3. Update Chart without animation (Efficient)
+            chart.update('none');
+        }
+
+        function updateLiveText(spread) {
+            const el = document.getElementById('liveSpread');
+            const prev = parseFloat(el.getAttribute('data-prev') || spread);
+            
+            // Formatting Live Spread Text to 8 decimal places
+            el.textContent = spread.toFixed(DECIMAL_PLACES);
+            
+            // Color flash based on tick direction
+            if (spread > prev) el.style.color = '#22c55e'; // Green
+            else if (spread < prev) el.style.color = '#ef4444'; // Red
+            else el.style.color = '#8b5cf6'; // Purple (No change)
+            
+            el.setAttribute('data-prev', spread);
+        }
+
+        function updateStats(data) {
+            if (data.mean && data.mean.length > 0) {
+                const bandIndex = data.mean.length - 1; // Band stats correspond to the last candle
+                
+                if (data.mean[bandIndex] !== null && bandIndex >= 0) {
+                    // Formatting Stat Cards to 8 decimal places
+                    document.getElementById('mean').textContent = data.mean[bandIndex].toFixed(DECIMAL_PLACES);
+                    document.getElementById('upper').textContent = data.upper[bandIndex].toFixed(DECIMAL_PLACES);
+                    document.getElementById('lower').textContent = data.lower[bandIndex].toFixed(DECIMAL_PLACES);
+                }
+            }
+        }
+
+        function setStatus(state, text) {
+            const el = document.getElementById('status');
+            const txt = document.getElementById('statusText');
+            el.className = `status ${state}`;
+            txt.textContent = text;
+        }
+
+        function connect(pair) {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            
+            setStatus('connecting', 'Connecting...');
+            currentPair = pair;
+            
+            // Connect to FastAPI WebSocket
+            ws = new WebSocket(`ws://localhost:8005/ws/${pair}`);
+            
+            ws.onopen = () => {
+                console.log(`✅ Connected to ${pair}`);
+                setStatus('live', 'Live Connection');
+            };
+            
+            ws.onmessage = (e) => {
+                try {
+                    const msg = JSON.parse(e.data);
+                    
+                    if (msg.type === 'initial_data' || msg.type === 'chart_update') {
+                        console.log(msg.type === 'initial_data' ? '📊 Loaded History' : '🕯️ New Candle');
+                        updateChartFull(msg.data);
+                    } 
+                    else if (msg.type === 'live_spread') {
+                        updateLiveSpread(msg.spread);
+                    }
+                } catch (err) {
+                    console.error("Parse error:", err);
+                }
+            };
+            
+            ws.onerror = (err) => {
+                console.error("WS Error", err);
+                setStatus('error', 'Connection Error');
+            };
+            
+            ws.onclose = () => {
+                console.log('❌ Disconnected');
+                setStatus('error', 'Disconnected');
+                if (currentPair === pair) {
+                    setTimeout(() => connect(pair), 3000);
+                }
+            };
+        }
+
+        async function loadPairs() {
+            try {
+                const res = await fetch('http://localhost:8005/api/pairs');
+                const data = await res.json();
+                const pairs = data.pairs || ['BTCUSDT_ETHUSDT'];
+                
+                const select = document.getElementById('pairSelect');
+                select.innerHTML = pairs.map(p => `<option value="${p}">${p}</option>`).join('');
+                
+                if (pairs.length > 0) {
+                    currentPair = pairs[0];
+                    connect(currentPair);
+                }
+            } catch (e) {
+                console.error('Failed to load pairs:', e);
+                document.getElementById('pairSelect').innerHTML = '<option>Error loading pairs</option>';
+            }
+        }
+
+        document.getElementById('pairSelect').addEventListener('change', (e) => {
+            const newPair = e.target.value;
+            if (newPair) connect(newPair);
+        });
+
+        window.addEventListener('load', () => {
+            initChart();
+            loadPairs();
+        });
+    </script>
+</body>
+</html>
