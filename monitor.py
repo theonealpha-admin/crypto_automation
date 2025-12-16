@@ -69,24 +69,55 @@ class spd_ws(StockData, Positions):
         self.pair = pd.read_csv('pair.csv')[['pair']].to_dict('records')
         self.rconn = RedisConnection.get_instance()
         self.logger = setup_logger('monitor_logger')
+        self.hedge_logger = setup_logger('hedge_logger')
         self.pubsub = self.rconn.pubsub()
         self.last_prices = {}
         self.hedge_ratios = {}
-        self.last_update_time = 0
-        self.fetched_hd = False
         self.trades = {}
+        
+        for p in self.pair:
+            pair = p['pair']
+            trade_data = self.rconn.get(f"trade:{pair}")
+            if trade_data:
+                try:
+                    self.trades[pair] = json.loads(trade_data.decode('utf-8') if isinstance(trade_data, bytes) else trade_data)
+                    df = self.get_spreads(pair).tail(1)
+                    if len(df) > 0:
+                        self.hedge_ratios[pair] = float(df['hedge_ratio'].iloc[0])
+                    print(f"Loaded active trade: {pair}")
+                except Exception as e:
+                    print(f"Failed to load trade {pair}: {e}")
 
     async def on_message(self):
+        log_success(self.logger, "Monitor started - Listening for updates...")
         while True:
             try:
                 self.pubsub.psubscribe('stock:price:*', '__keyspace@0__:trade:*')
+                self.pubsub.subscribe('spreads:updated')
+                
                 for message in self.pubsub.listen():
+                    channel = message['channel'].decode('utf-8') if isinstance(message['channel'], bytes) else message['channel']
+                    
+                    if message['type'] == 'message' and channel == 'spreads:updated':
+                        start = time.time()
+                        last_candle = None
+                        for p in self.pair:
+                            pair = p['pair']
+                            if pair in self.trades:
+                                df = self.get_spreads(pair).tail(1)
+                                if len(df) > 0:
+                                    self.hedge_ratios[pair] = float(df['hedge_ratio'].iloc[0])
+                                    last_candle = pd.to_datetime(df['date'].iloc[0], unit='ms').tz_localize('UTC').tz_convert('Asia/Kolkata')
+                        log_success(self.hedge_logger, f"Hedge ratios updated | Candle: {last_candle} | Time: {time.time()-start:.2f}s | Active: {len([p for p in self.trades if p in self.hedge_ratios])}")
+                        continue
+                    
                     if message['type'] != 'pmessage':
                         continue
-                    channel = message['channel'].decode('utf-8')
+                        
                     if channel.startswith('stock:price:'):
                         self.last_prices[channel.split(':')[-1]] = float(message['data'].decode('utf-8'))
                         await self.calculate_spread()
+                        
                     elif channel.startswith('__keyspace@0__:trade:') and message['data'].decode('utf-8') == 'set':
                         pair = channel.split(':')[-1]
                         trade_data = self.rconn.get(f"trade:{pair}")
@@ -105,40 +136,26 @@ class spd_ws(StockData, Positions):
                 self.pubsub = self.rconn.pubsub()
 
     async def calculate_spread(self):
-        current_time = time.time()
-        current_seconds = datetime.now().second
-        if self.fetched_hd == False or current_seconds == 2 and (current_time - self.last_update_time) >= 60:
-            self.fetched_hd = True
-            for p in self.pair:
-                pair = p['pair']
-                df = self.get_spreads(pair).tail(1)
-                if len(df) > 0:
-                    self.hedge_ratios[pair] = float(df['hedge_ratio'].iloc[0])
-                trade_data = self.rconn.get(f"trade:{pair}")
-                self.trades[pair] = json.loads(trade_data) if trade_data else None
-                # print(f"pair : {pair} trades : {self.trades[pair]}")
-            self.last_update_time = current_time
-
         for p in self.pair:
             pair = p['pair']
             s1, s2 = pair.split('_')
             
-            if s1 in self.last_prices and s2 in self.last_prices:
-                hedge_ratio = self.hedge_ratios[pair]
+            if s1 in self.last_prices and s2 in self.last_prices and pair in self.hedge_ratios:
                 x = np.log(self.last_prices[s1])
                 y = np.log(self.last_prices[s2])
-                spd_close = y - (hedge_ratio * x)
+                spd_close = y - (self.hedge_ratios[pair] * x)
+                
                 if self.trades.get(pair):
                     trade = self.trades[pair]
                     mean_price = float(trade['mean'])
                     action = trade['action']
+                    
                     if action == "BUY" and spd_close >= mean_price:
                         self.close_position(pair, spd_close)
                         del self.trades[pair]
                     elif action == "SELL" and spd_close <= mean_price:
-                        self.close_position(pair, spd_close)   
-                        del self.trades[pair]    
-
+                        self.close_position(pair, spd_close)
+                        del self.trades[pair]
                     # print(f"{pair} | Spread: {spd_close:.5f} | mean_price: {mean_price} | Action: {action}")  
                     # print(f"trade {self.trades}")
 

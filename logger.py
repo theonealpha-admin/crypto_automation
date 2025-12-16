@@ -27,17 +27,15 @@ class ColoredFormatter(logging.Formatter):
 def setup_logger(name='trade_logger'):
     """Setup logger with file and console handlers"""
     
-    # Create log directory
     log_dir = Path("log")
     log_dir.mkdir(exist_ok=True)
     
-    # Create logger
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
     
-    # File handler - UTF-8 encoding
-    log_file = log_dir / f"trades_{datetime.now().strftime('%Y%m%d')}.log"
+    # File name based on logger name
+    log_file = log_dir / f"{name}_{datetime.now().strftime('%Y%m%d')}.log"  # YE CHANGE KARO
     file_handler = logging.FileHandler(log_file, encoding='utf-8')
     file_handler.setLevel(logging.INFO)
     file_formatter = logging.Formatter(
@@ -46,7 +44,6 @@ def setup_logger(name='trade_logger'):
     )
     file_handler.setFormatter(file_formatter)
     
-    # Console handler - UTF-8 encoding
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
     console_formatter = ColoredFormatter(
@@ -55,7 +52,6 @@ def setup_logger(name='trade_logger'):
     )
     console_handler.setFormatter(console_formatter)
     
-    # Add handlers
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
     

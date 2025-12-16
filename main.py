@@ -18,7 +18,7 @@ from spreads import Spreads
 
 symbols = pd.read_csv('crypto.csv')[['symbol', 'exchange']].to_dict('records')
 db = DB()
-
+rconn = RedisConnection.get_instance()
 def spd_sql_redis():
     pairs = pd.read_csv('pair.csv')['pair'].tolist()
     Conf = Config()
@@ -89,6 +89,7 @@ def spreads_cls(event, stocks_df):
             combined_cache[f"{pair}_2"] = cdf2
             sp_df = spd.calculate_spread(s1, s2, cdf1, cdf2, pair, live=True)
         print(f"⏱️ Spreads loop total: {time.time()-start:.2f}s")
+        rconn.publish('spreads:updated', 'done')
         event.set()
 
 def execute_cls(event):
