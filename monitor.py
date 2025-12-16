@@ -24,10 +24,12 @@ class Positions(Config):
         return open_pos
 
     def log_exit_to_csv(self, pair, exit_spread):
-        os.makedirs('log', exist_ok=True)
-        with open('log/trade_history.csv', 'a', newline='') as f:
-            csv.writer(f).writerow([datetime.now(), pair, "EXIT", None, None, None, None, 
-                                    None, None, datetime.now(), exit_spread, "CLOSED"])
+        df = pd.read_csv('log/trade_history.csv')
+        mask = (df['Pair'] == pair) & (df['Status'] == 'OPEN')
+        if mask.any():
+            idx = df[mask].index[-1]
+            df.loc[idx, ['Exit_Time', 'Exit_Spread', 'Status']] = [datetime.now(), exit_spread, 'CLOSED']
+            df.to_csv('log/trade_history.csv', index=False)
 
     def close_position(self, pair, exit_spread):
         s1, s2 = pair.split('_')
