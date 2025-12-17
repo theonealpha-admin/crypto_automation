@@ -42,7 +42,7 @@ class Signals(sgl_temp, Config):
 
     def plot_chart(self, pair, series, mean, upper, lower):
         plt.figure(figsize=(12, 6))
-        plt.plot(series.tail(5000).values, label='Close', linewidth=2)
+        plt.plot(series.tail(5000).values, label=f'Close ({pair})', linewidth=2)
         plt.plot(mean.tail(5000).values, label='Mean', linestyle='--')
         plt.plot(upper.tail(5000).values, label='Upper', linestyle=':')
         plt.plot(lower.tail(5000).values, label='Lower', linestyle=':')
@@ -57,7 +57,7 @@ class Signals(sgl_temp, Config):
         std = series.rolling(window=self.lookback).std()
         upper = mean + (self.std * std)
         lower = mean - (self.std * std)
-        # self.plot_chart(pair, series, mean, upper, lower)
+        self.plot_chart(pair, series, mean, upper, lower)
         return mean, upper, lower
 
     def find_sing(self, mean, upper, lower, df):

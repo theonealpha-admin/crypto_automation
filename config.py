@@ -8,7 +8,7 @@ class Config:
         self.interval = "1m" #time interval for OHLCV
         self.fund=4999 #account balance
         self.window=120 #for spreads
-        self.lookback=20 #for zscore
+        self.lookback=120 #for zscore
         self.std=2 #for zscore
         self.api_key = 'jrXkGM33TgGgeTuCP8a8Zwfo4YuItLYlIJ5z7IILdAM5lUNHGxyxuOv06c02wNqA'
         self.api_secret = '08bAflWviEUI0mxqTeDPWfiK0J3YzNtbB2vZMi6luFANnq18br945PA9SxFWZy6E'

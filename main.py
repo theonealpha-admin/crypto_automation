@@ -23,7 +23,7 @@ def spd_sql_redis():
     pairs = pd.read_csv('pair.csv')['pair'].tolist()
     Conf = Config()
     rconn = RedisConnection.get_instance()
-    lookback = (Conf.lookback + 5)
+    lookback = (Conf.lookback * 3)
     for pair in pairs:
         key = f"spreads:{pair}"
         data = db.spreads_all_data(pair, limit=lookback)

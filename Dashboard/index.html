@@ -101,7 +101,6 @@
         .stat-value {
             font-size: 24px;
             font-weight: 600;
-            /* Font variant for numeric alignment is important when decimals change */
             font-variant-numeric: tabular-nums; 
         }
         
@@ -192,11 +191,81 @@
         let ws = null;
         let chart = null;
         let currentPair = '';
+        let tradeSignals = [];
         
-        // --- CONSTANTS ---
         const DECIMAL_PLACES = 8;
         
-        // Chart Initialization
+        // Dynamic Parameters - Change karein yahaan se
+        let LOOKBACK = 20;  // Rolling window size
+        let STD_DEV = 2;    // Standard deviation multiplier for bands
+
+        // Signal Drawing Plugin
+        const signalPlugin = {
+            id: 'tradeSignals',
+            afterDatasetsDraw(chart) {
+                const ctx = chart.ctx;
+                const meta = chart.getDatasetMeta(0);
+                const yScale = chart.scales.y;
+                
+                tradeSignals.forEach(signal => {
+                    const point = meta.data[signal.index];
+                    if (!point) return;
+                    
+                    const x = point.x;
+                    const y = point.y;
+                    
+                    ctx.save();
+                    
+                    // Draw Triangle
+                    ctx.fillStyle = signal.type === 'BUY' ? '#22c55e' : '#ef4444';
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    
+                    if (signal.type === 'BUY') {
+                        ctx.moveTo(x, y + 20);
+                        ctx.lineTo(x - 12, y + 38);
+                        ctx.lineTo(x + 12, y + 38);
+                    } else {
+                        ctx.moveTo(x, y - 20);
+                        ctx.lineTo(x - 12, y - 38);
+                        ctx.lineTo(x + 12, y - 38);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+                    
+                    // Draw TP Line and X
+                    if (signal.meanValue !== null && signal.meanValue !== undefined) {
+                        const meanY = yScale.getPixelForValue(signal.meanValue);
+                        
+                        // Dotted line to mean
+                        ctx.setLineDash([4, 4]);
+                        ctx.strokeStyle = signal.type === 'BUY' ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(x, y + (signal.type === 'BUY' ? 20 : -20));
+                        ctx.lineTo(x, meanY);
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                        
+                        // X mark at mean
+                        ctx.strokeStyle = signal.type === 'BUY' ? '#22c55e' : '#ef4444';
+                        ctx.lineWidth = 3;
+                        const size = 10;
+                        ctx.beginPath();
+                        ctx.moveTo(x - size, meanY - size);
+                        ctx.lineTo(x + size, meanY + size);
+                        ctx.moveTo(x + size, meanY - size);
+                        ctx.lineTo(x - size, meanY + size);
+                        ctx.stroke();
+                    }
+                    
+                    ctx.restore();
+                });
+            }
+        };
+        
         function initChart() {
             const ctx = document.getElementById('chart').getContext('2d');
             
@@ -205,7 +274,7 @@
                 data: {
                     labels: [],
                     datasets: [
-                        { // Index 0: Spread (Blue Line)
+                        { 
                             label: 'Spread', 
                             data: [], 
                             borderColor: '#3b82f6', 
@@ -214,7 +283,7 @@
                             tension: 0.1,
                             order: 2
                         },
-                        { // Index 1: Mean (Yellow Line)
+                        { 
                             label: 'Mean', 
                             data: [], 
                             borderColor: '#fbbf24', 
@@ -224,7 +293,7 @@
                             fill: false,
                             order: 3
                         },
-                        { // Index 2: Upper (Red Line)
+                        { 
                             label: 'Upper', 
                             data: [], 
                             borderColor: '#ef4444', 
@@ -234,7 +303,7 @@
                             fill: false,
                             order: 3
                         },
-                        { // Index 3: Lower (Green Line)
+                        { 
                             label: 'Lower', 
                             data: [], 
                             borderColor: '#22c55e', 
@@ -243,19 +312,6 @@
                             pointRadius: 0, 
                             fill: false,
                             order: 3
-                        },
-                        { // Index 4: Trades (Scatter)
-                            label: 'Trades', 
-                            data: [], 
-                            type: 'scatter', 
-                            pointBackgroundColor: (ctx) => {
-                                return ctx.raw?.action === 'BUY' ? '#22c55e' : '#ef4444';
-                            }, 
-                            pointBorderColor: '#fff', 
-                            pointBorderWidth: 2, 
-                            pointRadius: 6, 
-                            showLine: false,
-                            order: 0
                         }
                     ]
                 },
@@ -277,11 +333,9 @@
                             bodyColor: '#ccc',
                             borderColor: 'rgba(255,255,255,0.1)',
                             borderWidth: 1,
-                            // Tooltip Formatting to 8 decimal places
                             callbacks: {
                                 label: function(context) {
                                     let label = context.dataset.label || '';
-
                                     if (label) {
                                         label += ': ';
                                     }
@@ -307,53 +361,104 @@
                             grid: { color: 'rgba(255,255,255,0.05)' }, 
                             ticks: { 
                                 color: 'rgba(255,255,255,0.6)',
-                                // Y-Axis Ticks Formatting to 8 decimal places
                                 callback: function(value, index, ticks) {
                                     return value.toFixed(DECIMAL_PLACES);
                                 }
                             } 
                         }
                     }
+                },
+                plugins: [signalPlugin]
+            });
+        }
+
+        // Convert backend trades to chart signals
+        function processBackendTrades(trades, dates) {
+            tradeSignals = [];
+            
+            trades.forEach(trade => {
+                const index = dates.indexOf(trade.date);
+                if (index !== -1) {
+                    tradeSignals.push({
+                        type: trade.action,
+                        index: index,
+                        meanValue: null, // Backend doesn't provide mean at signal point
+                        spread: trade.spread
+                    });
                 }
             });
         }
 
-        // Handle Historical / New Candle Data
         function updateChartFull(data) {
             const timeLabels = data.dates.map(d => {
                 const date = new Date(d);
                 return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
             });
             
-            let currentCloses = [...data.closes];
-            let currentMean = [...data.mean];
-            let currentUpper = [...data.upper];
-            let currentLower = [...data.lower];
-            let currentLabels = [...timeLabels];
-
-            if (currentCloses.length > 0) {
-                // Preserve the last candle and create a new slot for the live tick
-                // Extend the data arrays with 'null' for the live tick slot
-                currentCloses.push(null); 
-                currentMean.push(null);
-                currentUpper.push(null);
-                currentLower.push(null);
+            // Filter out data where bands are not available (null values)
+            const validStartIndex = data.mean.findIndex(val => val !== null);
+            if (validStartIndex === -1 || validStartIndex === 0) {
+                // No valid bands found or all data is valid
+                let currentCloses = [...data.closes];
+                let currentMean = [...data.mean];
+                let currentUpper = [...data.upper];
+                let currentLower = [...data.lower];
+                let currentLabels = [...timeLabels];
                 
-                // Extend the labels with an empty string for the live tick slot
-                currentLabels.push(''); 
+                // Process backend trades
+                processBackendTrades(data.trades, data.dates);
+                
+                if (currentCloses.length > 0) {
+                    currentCloses.push(null); 
+                    currentMean.push(null);
+                    currentUpper.push(null);
+                    currentLower.push(null);
+                    currentLabels.push(''); 
+                }
+                
+                chart.data.labels = currentLabels;
+                chart.data.datasets[0].data = currentCloses;
+                chart.data.datasets[1].data = currentMean;
+                chart.data.datasets[2].data = currentUpper;
+                chart.data.datasets[3].data = currentLower;
+            } else {
+                // Skip initial data where bands are null
+                let currentCloses = data.closes.slice(validStartIndex);
+                let currentMean = data.mean.slice(validStartIndex);
+                let currentUpper = data.upper.slice(validStartIndex);
+                let currentLower = data.lower.slice(validStartIndex);
+                let currentLabels = timeLabels.slice(validStartIndex);
+                
+                // Process backend trades (adjust indices for sliced data)
+                const adjustedTrades = data.trades.map(trade => {
+                    const originalIndex = data.dates.indexOf(trade.date);
+                    return {
+                        ...trade,
+                        adjustedIndex: originalIndex - validStartIndex
+                    };
+                }).filter(trade => trade.adjustedIndex >= 0);
+                
+                tradeSignals = adjustedTrades.map(trade => ({
+                    type: trade.action,
+                    index: trade.adjustedIndex,
+                    meanValue: null,
+                    spread: trade.spread
+                }));
+                
+                if (currentCloses.length > 0) {
+                    currentCloses.push(null); 
+                    currentMean.push(null);
+                    currentUpper.push(null);
+                    currentLower.push(null);
+                    currentLabels.push(''); 
+                }
+                
+                chart.data.labels = currentLabels;
+                chart.data.datasets[0].data = currentCloses;
+                chart.data.datasets[1].data = currentMean;
+                chart.data.datasets[2].data = currentUpper;
+                chart.data.datasets[3].data = currentLower;
             }
-
-            chart.data.labels = currentLabels;
-            chart.data.datasets[0].data = currentCloses; // Spread
-            chart.data.datasets[1].data = currentMean; // Mean
-            chart.data.datasets[2].data = currentUpper; // Upper
-            chart.data.datasets[3].data = currentLower; // Lower
-            
-            // Map Trades (Index 4)
-            chart.data.datasets[4].data = data.trades.map(t => {
-                const idx = data.dates.indexOf(t.date);
-                return idx !== -1 ? { x: idx, y: t.spread, action: t.action } : null;
-            }).filter(Boolean);
 
             if (data.closes.length > 0) {
                 const lastVal = data.closes[data.closes.length - 1]; 
@@ -369,19 +474,13 @@
             chart.update();
         }
 
-        // Handle High-Frequency Live Updates
         function updateLiveSpread(spread) {
             if (!chart || chart.data.datasets[0].data.length < 1) return;
 
-            const liveIndex = chart.data.datasets[0].data.length - 1; 
-            
-            // 1. Update the live slot in the main Spread Line (Index 0)
+            const liveIndex = chart.data.datasets[0].data.length - 1;
             chart.data.datasets[0].data[liveIndex] = spread;
             
-            // 2. Update Text UI
             updateLiveText(spread);
-
-            // 3. Update Chart without animation (Efficient)
             chart.update('none');
         }
 
@@ -389,23 +488,20 @@
             const el = document.getElementById('liveSpread');
             const prev = parseFloat(el.getAttribute('data-prev') || spread);
             
-            // Formatting Live Spread Text to 8 decimal places
             el.textContent = spread.toFixed(DECIMAL_PLACES);
             
-            // Color flash based on tick direction
-            if (spread > prev) el.style.color = '#22c55e'; // Green
-            else if (spread < prev) el.style.color = '#ef4444'; // Red
-            else el.style.color = '#8b5cf6'; // Purple (No change)
+            if (spread > prev) el.style.color = '#22c55e';
+            else if (spread < prev) el.style.color = '#ef4444';
+            else el.style.color = '#8b5cf6';
             
             el.setAttribute('data-prev', spread);
         }
 
         function updateStats(data) {
             if (data.mean && data.mean.length > 0) {
-                const bandIndex = data.mean.length - 1; // Band stats correspond to the last candle
+                const bandIndex = data.mean.length - 1;
                 
                 if (data.mean[bandIndex] !== null && bandIndex >= 0) {
-                    // Formatting Stat Cards to 8 decimal places
                     document.getElementById('mean').textContent = data.mean[bandIndex].toFixed(DECIMAL_PLACES);
                     document.getElementById('upper').textContent = data.upper[bandIndex].toFixed(DECIMAL_PLACES);
                     document.getElementById('lower').textContent = data.lower[bandIndex].toFixed(DECIMAL_PLACES);
@@ -426,10 +522,10 @@
                 ws = null;
             }
             
+            tradeSignals = [];
             setStatus('connecting', 'Connecting...');
             currentPair = pair;
             
-            // Connect to FastAPI WebSocket
             ws = new WebSocket(`ws://localhost:8005/ws/${pair}`);
             
             ws.onopen = () => {
@@ -442,7 +538,6 @@
                     const msg = JSON.parse(e.data);
                     
                     if (msg.type === 'initial_data' || msg.type === 'chart_update') {
-                        console.log(msg.type === 'initial_data' ? '📊 Loaded History' : '🕯️ New Candle');
                         updateChartFull(msg.data);
                     } 
                     else if (msg.type === 'live_spread') {

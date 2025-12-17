@@ -30,7 +30,7 @@ hedge_ratios: Dict[str, float] = {} # { pair: last_known_beta }
 last_prices: Dict[str, float] = {}
 pair_listeners: Dict[str, asyncio.Task] = {}
 
-LOOKBACK = 20
+LOOKBACK = 120
 STD_MULTIPLIER = 2
 
 # --- Helper Functions (Math & Data) ---
@@ -57,11 +57,6 @@ def calculate_bands(closes: List[float], lookback=LOOKBACK):
     return mean_vals, upper_vals, lower_vals
 
 def get_latest_hedge_ratio(pair: str) -> float:
-    """
-    CORRECTED LOGIC: 
-    Reads the hedge ratio from the last saved spread candle, 
-    matching the background process's source.
-    """
     try:
         # Fetch the very last spread candle data (one element)
         raw_last_spread = redis_sync.lindex(f"spreads:{pair}", -1)
@@ -81,27 +76,43 @@ def get_chart_data(pair: str):
         return {'dates': [], 'closes': [], 'mean': [], 'upper': [], 'lower': [], 'trades': []}
 
     parsed_spreads = [json.loads(x) for x in raw_spreads]
+    
+    # 🎯 FIX: Sort by date in ascending order
+    parsed_spreads.sort(key=lambda x: x['date'])
+    
     dates = [x['date'] for x in parsed_spreads]
     closes = [x['close'] for x in parsed_spreads]
 
     # 2. Calculate Bands
     mean, upper, lower = calculate_bands(closes)
 
-    # 3. Fetch Trades
+    # 3. 🎯 NEW: Detect Band Crossings and Generate Actions
     trades = []
-    trade_data = redis_sync.get(f"trades:{pair}")
-    if trade_data:
-        try:
-            # Note: Assuming trade data is a JSON list of trade objects
-            trade_list = json.loads(trade_data) 
-            trades = [{
-                'date': t.get('date'),
-                'spread': float(t.get('entry', 0)),
-                'action': t.get('action', 'BUY'),
-                'pnl': t.get('pnl', 0)
-            } for t in trade_list]
-        except Exception as e:
-            print(f"Error parsing trades: {e}")
+    
+    for i in range(len(closes)):
+        # Skip if bands are not calculated yet
+        if i >= len(upper) or upper[i] is None or lower[i] is None:
+            continue
+            
+        spread_val = closes[i]
+        
+        # Check for Upper Band Cross (SELL Signal)
+        if spread_val >= upper[i]:
+            trades.append({
+                'date': dates[i],
+                'spread': float(spread_val),
+                'action': 'SELL',
+                'pnl': 0  # You can calculate PnL if needed
+            })
+        
+        # Check for Lower Band Cross (BUY Signal)
+        elif spread_val <= lower[i]:
+            trades.append({
+                'date': dates[i],
+                'spread': float(spread_val),
+                'action': 'BUY',
+                'pnl': 0  # You can calculate PnL if needed
+            })
 
     return {
         'dates': dates,
@@ -118,7 +129,6 @@ def get_dynamic_pairs():
     return [k.replace("spreads:", "") for k in keys]
 
 # --- WebSocket & Async Logic ---
-
 async def broadcast_to_pair(pair: str, message: dict):
     """Send message to all clients watching a specific pair"""
     if pair not in active_connections:
