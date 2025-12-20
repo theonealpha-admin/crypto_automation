@@ -57,7 +57,7 @@ class Signals(sgl_temp, Config):
         std = series.rolling(window=self.lookback).std()
         upper = mean + (self.std * std)
         lower = mean - (self.std * std)
-        self.plot_chart(pair, series, mean, upper, lower)
+        # self.plot_chart(pair, series, mean, upper, lower)
         return mean, upper, lower
 
     def find_sing(self, mean, upper, lower, df):
