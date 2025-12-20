@@ -26,7 +26,7 @@ REDIS_URL = "redis://localhost:6380"
 
 # --- Global State ---
 active_connections: Dict[str, Set[WebSocket]] = {}
-hedge_ratios: Dict[str, float] = {} # { pair: last_known_beta }
+hedge_ratios: Dict[str, float] = {}
 last_prices: Dict[str, float] = {}
 pair_listeners: Dict[str, asyncio.Task] = {}
 
@@ -36,14 +36,14 @@ STD_MULTIPLIER = 2
 # --- Helper Functions (Math & Data) ---
 
 def calculate_bands(closes: List[float], lookback=LOOKBACK):
-    """Bollinger Bands calculation for historical data"""
+    """Bollinger Bands calculation - same logic as your original"""
     if len(closes) < lookback:
         return [], [], []
     
     closes_array = np.array(closes)
-    mean_vals = [None] * (lookback - 1)
-    upper_vals = [None] * (lookback - 1)
-    lower_vals = [None] * (lookback - 1)
+    mean_vals = []
+    upper_vals = []
+    lower_vals = []
     
     for i in range(lookback - 1, len(closes_array)):
         window = closes_array[i - lookback + 1:i + 1]
@@ -53,20 +53,18 @@ def calculate_bands(closes: List[float], lookback=LOOKBACK):
         mean_vals.append(float(mean))
         upper_vals.append(float(mean + STD_MULTIPLIER * std))
         lower_vals.append(float(mean - STD_MULTIPLIER * std))
-        
+    
     return mean_vals, upper_vals, lower_vals
 
 def get_latest_hedge_ratio(pair: str) -> float:
     try:
-        # Fetch the very last spread candle data (one element)
         raw_last_spread = redis_sync.lindex(f"spreads:{pair}", -1)
         if raw_last_spread:
             last_spread_data = json.loads(raw_last_spread)
-            # 'hedge_ratio' key का उपयोग किया जाता है जो 'calculate_spread' फंक्शन में सेव हुआ था
-            return float(last_spread_data.get('hedge_ratio', 1.0)) 
+            return float(last_spread_data.get('hedge_ratio', 1.0))
     except Exception as e:
         print(f"Error fetching latest hedge ratio for {pair}: {e}")
-    return 1.0 # Default to 1.0 if any error occurs
+    return 1.0
 
 def get_chart_data(pair: str):
     """Fetch full historical chart data from Redis (Sync)"""
@@ -77,49 +75,55 @@ def get_chart_data(pair: str):
 
     parsed_spreads = [json.loads(x) for x in raw_spreads]
     
-    # 🎯 FIX: Sort by date in ascending order
+    # 🎯 FIX 1: Sort by date in ascending order
     parsed_spreads.sort(key=lambda x: x['date'])
     
     dates = [x['date'] for x in parsed_spreads]
     closes = [x['close'] for x in parsed_spreads]
 
     # 2. Calculate Bands
-    mean, upper, lower = calculate_bands(closes)
+    mean_vals, upper_vals, lower_vals = calculate_bands(closes)
 
-    # 3. 🎯 NEW: Detect Band Crossings and Generate Actions
+    # 🎯 FIX 2: Remove None values - align all arrays properly
+    # Since bands start after lookback-1 positions, we need to adjust
+    valid_start_idx = LOOKBACK - 1
+    
+    # Slice dates and closes to match band calculations
+    valid_dates = dates[valid_start_idx:]
+    valid_closes = closes[valid_start_idx:]
+    
+    # Now all arrays have same length with no None values
+    
+    # 3. Detect Band Crossings and Generate Actions
     trades = []
     
-    for i in range(len(closes)):
-        # Skip if bands are not calculated yet
-        if i >= len(upper) or upper[i] is None or lower[i] is None:
-            continue
-            
-        spread_val = closes[i]
+    for i in range(len(valid_closes)):
+        spread_val = valid_closes[i]
         
         # Check for Upper Band Cross (SELL Signal)
-        if spread_val >= upper[i]:
+        if spread_val >= upper_vals[i]:
             trades.append({
-                'date': dates[i],
+                'date': valid_dates[i],
                 'spread': float(spread_val),
                 'action': 'SELL',
-                'pnl': 0  # You can calculate PnL if needed
+                'pnl': 0
             })
         
         # Check for Lower Band Cross (BUY Signal)
-        elif spread_val <= lower[i]:
+        elif spread_val <= lower_vals[i]:
             trades.append({
-                'date': dates[i],
+                'date': valid_dates[i],
                 'spread': float(spread_val),
                 'action': 'BUY',
-                'pnl': 0  # You can calculate PnL if needed
+                'pnl': 0
             })
 
     return {
-        'dates': dates,
-        'closes': closes,
-        'mean': mean,
-        'upper': upper,
-        'lower': lower,
+        'dates': valid_dates,
+        'closes': valid_closes,
+        'mean': mean_vals,
+        'upper': upper_vals,
+        'lower': lower_vals,
         'trades': trades
     }
 
@@ -157,7 +161,6 @@ async def redis_listener(pair: str):
         
         await pubsub.subscribe(f"stock:price:{s1}", f"stock:price:{s2}", "spreads:updated")
 
-        # 🎯 FIX APPLIED HERE: Initial Hedge Ratio Fetch now uses the correct source
         hedge_ratios[pair] = get_latest_hedge_ratio(pair)
 
         async for message in pubsub.listen():
@@ -178,10 +181,8 @@ async def redis_listener(pair: str):
                     if s1 in last_prices and s2 in last_prices:
                         p1 = last_prices[s1]
                         p2 = last_prices[s2]
-                        # Use the cached, latest ratio
-                        ratio = hedge_ratios.get(pair, 1.0) 
+                        ratio = hedge_ratios.get(pair, 1.0)
                         
-                        # Calculation: Spread = log(P2) - ratio * log(P1)
                         spread_val = np.log(p2) - (ratio * np.log(p1))
                         
                         await broadcast_to_pair(pair, {
@@ -189,15 +190,12 @@ async def redis_listener(pair: str):
                             'spread': float(spread_val)
                         })
                 except Exception as e:
-                    # Low price/zero price can cause log error
                     print(f"⚠️ Live Calc Error: {e}")
 
             # --- CASE 2: New Candle / Historical Update ---
             elif channel == "spreads:updated":
-                # 🎯 FIX APPLIED HERE: Refresh Hedge Ratio from the correct source
                 hedge_ratios[pair] = get_latest_hedge_ratio(pair)
                 
-                # Fetch full chart data 
                 chart_data = get_chart_data(pair)
                 
                 await broadcast_to_pair(pair, {
@@ -256,9 +254,6 @@ async def websocket_endpoint(websocket: WebSocket, pair: str):
 @app.get("/api/pairs")
 def get_pairs():
     return {"pairs": get_dynamic_pairs()}
-
-# Note: /api/stats/{pair} is removed as we no longer store zscore in Redis sync.
-# You can re-add it if your background process updates a 'zscore:{pair}' key.
 
 if __name__ == "__main__":
     import uvicorn
