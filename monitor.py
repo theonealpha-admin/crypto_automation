@@ -77,13 +77,14 @@ class spd_ws(StockData, Positions):
         
         for p in self.pair:
             pair = p['pair']
+            df = self.get_spreads(pair).tail(1)
+            if len(df) > 0:
+                self.hedge_ratios[pair] = float(df['hedge_ratio'].iloc[0])
+            
             trade_data = self.rconn.get(f"trade:{pair}")
             if trade_data:
                 try:
                     self.trades[pair] = json.loads(trade_data.decode('utf-8') if isinstance(trade_data, bytes) else trade_data)
-                    df = self.get_spreads(pair).tail(1)
-                    if len(df) > 0:
-                        self.hedge_ratios[pair] = float(df['hedge_ratio'].iloc[0])
                     print(f"Loaded active trade: {pair}")
                 except Exception as e:
                     print(f"Failed to load trade {pair}: {e}")
@@ -103,11 +104,11 @@ class spd_ws(StockData, Positions):
                         last_candle = None
                         for p in self.pair:
                             pair = p['pair']
-                            if pair in self.trades:
-                                df = self.get_spreads(pair).tail(1)
-                                if len(df) > 0:
-                                    self.hedge_ratios[pair] = float(df['hedge_ratio'].iloc[0])
-                                    last_candle = pd.to_datetime(df['date'].iloc[0], unit='ms').tz_localize('UTC').tz_convert('Asia/Kolkata')
+                            # if pair in self.trades:
+                            df = self.get_spreads(pair).tail(1)
+                            if len(df) > 0:
+                                self.hedge_ratios[pair] = float(df['hedge_ratio'].iloc[0])
+                                last_candle = pd.to_datetime(df['date'].iloc[0], unit='ms').tz_localize('UTC').tz_convert('Asia/Kolkata')
                         log_success(self.hedge_logger, f"Hedge ratios updated | Candle: {last_candle} | Time: {time.time()-start:.2f}s | Active: {len([p for p in self.trades if p in self.hedge_ratios])}")
                         continue
                     
@@ -144,6 +145,10 @@ class spd_ws(StockData, Positions):
                 x = np.log(self.last_prices[s1])
                 y = np.log(self.last_prices[s2])
                 spd_close = y - (self.hedge_ratios[pair] * x)
+                # Publish spread price
+                channel = f"spread:price:{pair}"
+                data = {"spread": float(spd_close), "hedge_ratio": self.hedge_ratios[pair]}
+                self.rconn.publish(channel, json.dumps(data))
                 
                 if self.trades.get(pair):
                     trade = self.trades[pair]
